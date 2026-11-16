@@ -1,0 +1,10 @@
+.*
+*.md
+*.out
+hack/
+test/
+docs/
+Makefile
+LICENSE
+.git/
+.github/
