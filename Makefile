@@ -1,4 +1,4 @@
-IMG ?= gateway-controller:latest
+IMG ?= ghcr.io/praxis-proxy/gateway-controller:latest
 
 # kind-up builds and loads this tag rather than IMG, so a local kind cluster
 # is never accidentally running an image meant for a registry.
@@ -189,6 +189,7 @@ uninstall: manifests kustomize ## Remove the CRDs from the target cluster.
 deploy: manifests kustomize ## Deploy the manager to the target cluster.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
+	cd config/manager && $(KUSTOMIZE) edit set image controller=ghcr.io/praxis-proxy/gateway-controller:latest
 
 .PHONY: undeploy
 undeploy: kustomize ## Remove the manager from the target cluster.
