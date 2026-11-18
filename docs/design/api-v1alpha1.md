@@ -2,6 +2,10 @@
 
 Status: Draft.
 
+> **Note:** The shapes of some APIs in this document are likely to change as we
+> work through the features. They are intended to help us think about the API
+> space as we implement, not to be definitive API contracts at this point.
+
 API group/version: `aigateway.praxis.io/v1alpha1`.
 
 Source: [AIGateway API proposal](api.md).
@@ -159,7 +163,7 @@ inference and MCP capabilities, and governance directly on the resource in v1alp
 | `endpoint` | Shared gateway exposure settings: port and optional TLS certificate reference. |
 | `inference` | Optional inference capability with explicitly selected inference APIs. |
 | `mcp` | Optional MCP capability; an empty stanza enables MCP. |
-| `governance` | Inline governance configuration, including authentication identities. |
+| `governance` | Inline governance: authentication identities and guardrails applied on the shared listener. |
 
 Gateway governance applies to inference and MCP processing on the shared listener.
 Authentication is configured on the gateway; capability-specific governance
@@ -374,8 +378,10 @@ individual gateway definitions.
 | `providers` | One or more upstream provider mappings for the published model. |
 | `providers[].providerRef` | Reference to a ModelProvider belonging to the same Tenant. |
 | `providers[].upstreamModel` | The model name sent to that provider. |
-| `governance` | Inline model authorization, with guardrails and observability as stretch goals. |
+| `governance` | Inline model authorization, token rate limits, and guardrails (observability remains a stretch goal). |
 | `governance.authorization.cel` | CEL expression defining the model's authorization check. |
+| `governance.rateLimits.tokens` | Ordered, identity-keyed token-budget rules for this model (first match wins). |
+| `governance.guardrails` | Input/output checks applied to this model (additive with the gateway's). |
 
 Selection among multiple provider mappings remains to be defined; weighting and
 failover are out of scope.
@@ -386,9 +392,9 @@ failover are out of scope.
 | --- | --- |
 | `authentication` | Out of scope on Model; configured on the gateway. |
 | `authorization` | In scope: access rules for the model. |
-| `guardrails` | Stretch goal; supported controls remain to be defined. |
+| `guardrails` | In scope: additive input/output checks (gateway + Model). Supported check set to be finalised. |
 | `observability` | Stretch goal; supported controls remain to be defined. |
-| `rateLimits` | Out of scope for v1alpha1, including request-count and token limits. |
+| `rateLimits` | In scope for token limits (identity-keyed budgets). Request-count limits out of scope. |
 
 ### Authentication and authorization
 
@@ -402,8 +408,48 @@ The Model's authorization check succeeds only when the expression is `true`.
 ### Governance composition
 
 Model authorization adds to gateway authorization; a request must satisfy both.
-Model guardrails and observability, if supported, are also additive and do not
-replace or disable the gateway's corresponding controls.
+Model guardrails are additive with the gateway's and do not replace or disable
+them. Model token rate limits are evaluated against the identity established by
+gateway `governance.authentication`.
+
+### Rate limits (token)
+
+> **Status: speculative.** The field shape below illustrates the intended use
+> case; the full API will emerge as token-based rate limiting is implemented in
+> the policy engine — tracked in
+> [praxis-proxy/policy#308](https://github.com/praxis-proxy/policy/issues/308).
+
+Token limits are an ordered list of identity-keyed rules under
+`governance.rateLimits.tokens`. A budget is a property of the (subject, model)
+pair, not of the model alone — so one model can grant different budgets to
+different subjects. This is what lets many MaaS subscriptions map onto a single
+model (see [api.md](api.md) §9.1).
+
+- Each rule has a `match` over the verified identity (claims from gateway
+  `governance.authentication`) and one or more windowed `budgets` (e.g. an hourly
+  and a daily limit).
+- Rules are evaluated first-match-wins — ordered evaluation within this one list,
+  not a cross-resource merge.
+- A trailing catch-all (`match: {}`) with `deny: true` yields the
+  "authorised-but-no-quota → 429" behaviour (the analog of gateway default-deny).
+
+| Field | Purpose |
+| --- | --- |
+| `governance.rateLimits.tokens[].match` | Identity selector over verified claims; `{}` matches any authorised subject. |
+| `governance.rateLimits.tokens[].budgets[]` | Windowed token budgets, each `{ window, limit }`. |
+| `governance.rateLimits.tokens[].deny` | When `true`, deny the match (→ 429) instead of granting a budget. |
+
+The full tokenomics surface (estimation, token-type weights, org/team/user
+hierarchy) is in [api.md](api.md) §6.1; the above is the common-case shorthand.
+Subscription priority (ordering / `inferencePriority`) is not surfaced in v1alpha1.
+
+### Guardrails
+
+Guardrails are input/output checks configured under `governance.guardrails`, at
+the gateway (`AIGateway.spec.governance.guardrails`) and/or per Model. Gateway and
+Model guardrails are additive — neither replaces the other. A configured check
+that cannot be enforced must fail closed; it must not be silently dropped. The
+supported check set and exact field surface are being finalised.
 
 ### Namespace and tenancy
 
@@ -428,6 +474,9 @@ in v1alpha1.
   `providerRef` that resolves to a ModelProvider of the same Tenant and an
   `upstreamModel` name.
 - Model-level `governance.authentication` must not be specified in v1alpha1.
+- `governance.rateLimits.tokens` entries, when present, each require a `match` and
+  either a non-empty `budgets` list (each `{ window, limit }` with a positive
+  `limit`) or `deny: true`.
 
 ### Published-name conflicts
 
@@ -440,7 +489,9 @@ reason `Conflict`, and a message identifying the winner.
 
 This Model publishes `alpha-chat` through every inference-enabled gateway owned
 by `team-alpha`. It uses gateway OIDC authentication and requires the verified `groups` claim to
-include `alpha-model-users`; a missing claim or group fails authorization.
+include `alpha-model-users`; a missing claim or group fails authorization. Premium
+and basic subscriber groups receive different token budgets; an authorised caller
+in neither group is denied (429).
 
 ```yaml
 apiVersion: aigateway.praxis.io/v1alpha1
@@ -460,6 +511,14 @@ spec:
     authorization:
       cel: >-
         has(claim.groups) && "alpha-model-users" in claim.groups
+    rateLimits:
+      tokens:                                     # ordered; first match wins
+        - match: { groups: ["team-alpha-premium"] }
+          budgets: [ { window: 1h, limit: 500000 } ]
+        - match: { groups: ["team-alpha-basic"] }
+          budgets: [ { window: 1h, limit: 100000 }, { window: 24h, limit: 1000000 } ]
+        - match: {}                               # authorised but unsubscribed
+          deny: true                              # -> 429
 ```
 
 ### Out of scope
@@ -467,11 +526,12 @@ spec:
 - Configuration inheritance through `baseRef` or `ModelConfig`.
 - Cross-namespace Tenant, ModelProvider, or gateway references.
 - Model-level authentication configuration and overrides.
-- Request-count and token limits.
+- Request-count rate limits (token limits are in scope).
 - Provider weighting and failover.
+- Subscription priority / `inferencePriority` ordering inputs.
 
-Spikes may assess PPE rate-limit support and filter changes needed for weighting
-and failover in a later iteration.
+Spikes may assess filter changes needed for provider weighting and failover in a
+later iteration.
 
 ## MCPServer
 
