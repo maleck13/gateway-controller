@@ -1,0 +1,62 @@
+name: Feature
+description: Define a user-facing capability within an epic
+type: Feature
+labels: ["triage/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a feature for a user-facing capability with testable acceptance criteria.
+        New proposals start in Discussions. After creation, link this feature as a native
+        sub-issue of its epic and link implementation tasks as its sub-issues.
+  - type: input
+    id: epic
+    attributes:
+      label: Epic
+      description: Reference the parent epic by issue number or full URL.
+      placeholder: "#123"
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link relevant design documents, approved discussions, or Jira issues. Use full URLs.
+  - type: textarea
+    id: user-story
+    attributes:
+      label: User story
+      description: Identify the user, capability, and benefit.
+      placeholder: |
+        As a ...
+        I want ...
+        So that ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List observable behaviour, including relevant failure cases and status reporting.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Tasks
+      description: Reference known implementation, documentation, and verification tasks, or list tasks to create.
+      placeholder: |
+        - #123 — Implementation task
+        - Task still to create
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Link blocking work and explain what this feature needs from it.
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: Describe excluded behaviour and link separate features where known.

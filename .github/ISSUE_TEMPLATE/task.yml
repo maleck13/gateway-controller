@@ -1,0 +1,57 @@
+name: Task
+description: Define a bounded piece of work that delivers part of a feature
+type: Task
+labels: ["triage/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a task for bounded implementation, documentation, or verification work.
+        After creation, link it as a native sub-issue of its parent feature;
+        a body reference alone does not establish that relationship.
+  - type: input
+    id: feature
+    attributes:
+      label: Feature
+      description: Reference the parent feature by issue number or full URL.
+      placeholder: "#123"
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link relevant design sections, related issues, or Jira issues. Use full URLs.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What will change, and how does it contribute to the feature?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: List the concrete changes and applicable validation or reconciliation rules.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Link blocking tasks and explain what this task needs from them.
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: State the boundaries and link work handled by other tasks or features.
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: List verifiable completion criteria, including relevant tests, generated manifests, and documentation.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
