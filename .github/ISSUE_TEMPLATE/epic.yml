@@ -1,35 +1,38 @@
 # Epics organize implementation work for an accepted proposal.
 # See https://github.com/praxis-proxy/enhancements for the full lifecycle.
 name: Epic
-description: Track a large body of related work
-labels: ["epic", "triage/needs-triage"]
+description: Define an outcome delivered through related features
+type: Epic
+labels: ["triage/needs-triage"]
 body:
-  - type: input
-    id: discussion
+  - type: markdown
     attributes:
-      label: Originating Discussion
-      description: Link to the approved discussion (see https://github.com/praxis-proxy/enhancements)
+      value: |
+        Use an epic for an outcome spanning several features. After creation,
+        link the features as native sub-issues; body references alone do not establish that relationship.
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: Give a human-readable summary of what this epic delivers, who it is for, and what they will be able to do. Use domain language rather than implementation details.
     validations:
       required: true
   - type: textarea
-    id: summary
+    id: why
     attributes:
-      label: Summary
-      description: What does this epic accomplish?
+      label: Why
+      description: Explain clearly why this is needed. Describe the problem, who it affects, and how delivering this epic helps them. Write for a human reader without assuming technical context.
     validations:
       required: true
   - type: textarea
-    id: success-criteria
+    id: how
     attributes:
-      label: Success Criteria
-      description: How do we know this is done?
-    validations:
-      required: true
-  - type: textarea
-    id: sub-tasks
-    attributes:
-      label: Sub-Tasks
-      description: Known work items (will become sub-issues)
+      label: How
+      description: Link existing discussions, designs, proposals, or review PRs using full URLs. Explain what each reference covers and which design defines the delivery scope. Track features as native sub-issues.
       placeholder: |
-        - [ ] Task 1
-        - [ ] Task 2
+        - [Delivery design](https://...) — Scope and behaviour for this version.
+        - [Discussion or proposal](https://...) — Context, decisions, and alternatives.
+
+        Delivery is broken into the feature sub-issues under this epic.
+    validations:
+      required: true
