@@ -42,12 +42,12 @@ that status does not establish PPE runtime validity or traffic enforcement.
 Generated-document tests must also assert the expected plugin settings, identity
 mapping, authentication requirement and credential stripping.
 
-The Policy API has no workload-mount fields. The auth controller allocates the
-intended file path and supplies it to rendering, retaining reference/path
-requirements in an internal plan for future integration. This milestone neither
-adds mounts to Policy nor introduces a new binding resource. The generated path
-need not exist in a running container for this control-plane artifact to be valid.
-Actual projection must later honor the same path contract.
+The Policy API has no workload-mount fields. The controller derives file paths
+from the fixed convention below and supplies them to rendering. It retains
+selected-key projection requirements in an internal plan for future integration.
+This milestone neither adds mounts to Policy nor introduces a new binding resource.
+The generated path need not exist in a running container for this control-plane
+artifact to be valid. Actual projection must later honor the same path contract.
 
 Related boundaries: [API-key mapping #52](https://github.com/praxis-proxy/gateway-controller/issues/52),
 [shared policy wiring #51](https://github.com/praxis-proxy/gateway-controller/issues/51),
@@ -63,7 +63,8 @@ core workload path is a future consumer, not a prerequisite for Policy generatio
    define the package and trusted-context contracts, add the flat auth API/Tenant
    grant handling, and discover packages generically.
 2. **Default rendering — S04–S06:** create the API-key chart, resolve Secret
-   references and allocate intended paths, then render through Helm validation.
+   references, derive fixed paths and group shared projections, then render
+   through Helm validation. S05a replaces the earlier per-instance allocation.
 3. **Admission assets and packaging — S07–S09:** provide a shared default
    AIGateway VAP/binding with parity tests and administrator instructions, remove
    controller admission ownership, and ship the default template package.
@@ -93,14 +94,13 @@ active control-plane deliverable.
   and Tenant grants are sufficient controller gates for now; shared cases check
   admission/render parity.
 - Packages declare Secret input locations. The controller checks same-namespace
-  access and data-key existence, allocates stable paths and supplies trusted
+  access and data-key existence, derives fixed paths and supplies trusted
   context. Templates cannot override that context or create workload bindings.
   Secret contents stay out of rendering, policy documents, status and logs.
-- Allocation accounts for namespace, Secret/data key and consuming instance,
-  rejects conflicts within the planned files/reserved paths, and records future
-  projection requirements. Final workload-wide mount checks are deferred with
-  core integration. Verifier Secrets remain distinct from upstream credentials.
-- The default emits `identity/api-key` with `provider.kind: file`, the allocated
+- The internal plan separates per-slot template paths from shared Secret
+  projections. Templates specify neither filenames nor filesystem layouts.
+  Verifier Secrets remain distinct from upstream credentials.
+- The default emits `identity/api-key` with `provider.kind: file`, the resolved
   path and refresh/staleness settings. Map `user` to `subject.id` and `groups` to
   `subject.roles`. The assembler adds global authentication,
   `require(authenticated)` and caller-header stripping to the same document.
@@ -110,6 +110,37 @@ active control-plane deliverable.
 - Invalid input or lost permission cannot generate a new valid-looking fallback
   Policy with authentication removed. Reconcile owned output and input errors
   consistently; Policy generation and AIGateway serving readiness remain distinct.
+
+## Secret path and projection convention
+
+The controller derives each path directly from the validated Secret name and key:
+
+```text
+/var/run/praxis/auth/secrets/<secret-name>/<data-key>
+
+consumer-keys / keys.yaml
+  -> /var/run/praxis/auth/secrets/consumer-keys/keys.yaml
+```
+
+Paths do not depend on auth type, instance/slot names, object UIDs or Secret
+contents. The same Secret/key resolves to the same file for every consumer in
+the workload; different keys retain their own filenames. No separate mount list
+is required in the AIGateway API.
+
+For future workload integration, group references by namespace and Secret name.
+Each group has one read-only directory mount containing the union of referenced
+keys, in deterministic order. Unreferenced keys are excluded. Volume names are
+controller-generated Kubernetes identifiers; they do not determine file paths.
+The reserved directory belongs to the controller. Reject incompatible volumes
+or overlapping mounts rather than relocating files; repeated references to the
+same controller-managed projection are valid sharing.
+
+This contract assumes one source namespace per workload, matching the gateway's
+namespace. Combining namespaces in one workload is outside this design. Mount
+directories without `subPath` so Secret updates can propagate eventually; PPE's
+reload and staleness handling remain separate. Content changes and same-name
+Secret replacement retain paths, without claiming immediate runtime updates.
+A future ConfigMap source uses a separate `configmaps` directory.
 
 ## Contract decisions and remaining lifecycle work
 
@@ -135,8 +166,9 @@ withdrawal in this milestone.
 ## Verification and definition of done
 
 Unit tests cover JSON preservation, catalog discovery, schema validation,
-reference allocation/collisions, rendering and assembly. The generated PPE YAML
-must contain the expected plugin/header, file path, mapping, intervals,
+reference resolution, fixed paths, shared projections, collisions, rendering and
+assembly. The generated PPE YAML must contain the expected plugin/header,
+file path, mapping, intervals,
 `on_error: fail`, global authentication and credential stripping. It must contain
 no Secret bytes. Core YAML acceptance alone is not enough to prove those fields.
 
@@ -155,8 +187,9 @@ Completion requires all of the following:
   focused tests establish the generated PPE configuration's expected structure.
 - Invalid input, missing Secret/key, denied grants, failed rendering
   and unsupported auth combinations do not produce partially generated output.
-- Intended paths are deterministic and consistent with the internal projection
-  requirements; no actual Pod, mount or Proxy instance is required for this proof.
+- Paths follow the fixed convention; repeated references share paths/projections
+  and only selected keys appear in the internal projection plan. No actual Pod,
+  mount or Proxy instance is required for this proof.
 - Changes reconcile idempotently, Secret contents remain confidential, and Policy
   generation is not reported as a serving-ready AIGateway.
 - The documented control-plane example and relevant unit/integration/build/lint

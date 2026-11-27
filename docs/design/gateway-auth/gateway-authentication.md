@@ -76,6 +76,9 @@ changes require an explicit migration.
 
 VAP rules use CEL; they do not execute Helm or its schema. Default and extension
 owners test their admission rules against the same inputs as Helm validation.
+A tool or script can help template authors check that their VAP rules and JSON
+Schema accept and reject the same test inputs, identifying validation drift.
+
 The controller does not install, watch or check readiness of admission resources.
 Tenant grants and Helm validation are sufficient controller gates for now.
 Reference authorization and runtime credential validation remain separate checks.
@@ -144,19 +147,33 @@ Tenant grants trigger reassessment of affected gateways.
 
 Packages declare which input fields reference Secret data entries, allowing
 custom reference fields without auth-specific controller code. Before rendering,
-the controller validates the references and allocates volume names, mount
-directories and file paths. Paths are stable for unchanged references and checked
-against other gateway mounts. Packages can declare filename/layout requirements;
-the controller owns placement and supplies resolved paths as trusted template
-context. Templates do not generate volumes or mounts.
+the controller validates same-namespace references and selected keys, then derives
+each file path using a fixed convention:
+
+```text
+/var/run/praxis/auth/secrets/<secret-name>/<data-key>
+```
+
+For example, `consumer-keys` with key `keys.yaml` resolves to
+`/var/run/praxis/auth/secrets/consumer-keys/keys.yaml`. References to the same
+Secret/key share the same path, independent of auth type or instance name.
+The controller supplies resolved paths as trusted template context. Packages
+neither choose filesystem layouts nor generate volumes or mounts.
+
+The workload uses one read-only directory mount per referenced Secret, projecting
+only the keys required by its consumers. The controller combines repeated
+references, chooses volume names and rejects conflicts with other mounts. This
+convention assumes one source namespace per workload, matching the gateway's
+namespace; cross-namespace workload sharing requires a separate design.
 
 The `apiKey` default reads verifier records (key hashes and trusted identity
 attributes) from a same-namespace Secret. A directory mount allows record updates
-to propagate. Templates receive paths, never Secret contents, and those contents
-stay out of policy documents.
+to propagate eventually, without `subPath`; PPE separately reloads the file.
+Secret content changes and same-name replacement leave paths unchanged. Templates
+receive paths, never Secret contents, and those contents stay out of policy documents.
 
 The first version supports `secretRef`. A future `configMapRef` can use the same
-resolution and path-allocation model.
+model under a separate `configmaps` directory.
 
 ## Adding model authorization
 
@@ -188,7 +205,7 @@ plugins:
         name: X-API-Key
       provider:
         kind: file
-        path: /var/run/praxis/auth/consumers/keys.yaml
+        path: /var/run/praxis/auth/secrets/consumer-keys/keys.yaml
         refresh_secs: 5
         max_staleness_secs: 30
       record_map:
@@ -216,10 +233,9 @@ routes:
             expr: "'alpha-model-users' in subject.roles"
 ```
 
-Here, `user` becomes `subject.id` and `groups` becomes `subject.roles`. The file
-path is an illustrative controller allocation. Packages document their normalized
-identity fields and any additional `claim.*` values; rules cannot assume every
-source provides the same claims.
+Here, `user` becomes `subject.id` and `groups` becomes `subject.roles`. Packages
+document their normalized identity fields and any additional `claim.*` values;
+rules cannot assume every source provides the same claims.
 
 The caller must pass gateway authentication and all applicable gateway and model
 checks. Models are selected by published name before any upstream-name rewrite;
@@ -247,3 +263,5 @@ Before completing the design, resolve:
 - [PPE model routes](https://github.com/praxis-proxy/policy/blob/main/docs/content/guides/llm-routes.md)
 - [Helm values schema validation](https://helm.sh/docs/topics/charts/#schema-files)
 - [Kubernetes ValidatingAdmissionPolicy and bindings](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/)
+- [Kubernetes Secret file projection and updates](https://kubernetes.io/docs/concepts/configuration/secret/#using-secrets-as-files-from-a-pod)
+- [Prometheus Operator Secret mount convention](https://github.com/prometheus-operator/prometheus-operator/blob/main/pkg/prometheus/common.go)

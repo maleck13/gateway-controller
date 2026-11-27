@@ -14,9 +14,9 @@ Task IDs are retained: S10, S13 and S15 have moved to deferred core integration.
 No active task depends on those tasks. Keep authored changes around 3–5 files,
 splitting before coding where needed; include generated output with its source.
 
-Completed implementation items below record work verified in the prior session.
-Those code changes will be applied on a separate branch; this documentation
-update does not apply them.
+Completed items record verified work on the implementation branches; this design
+branch does not apply those code changes. S05a replaces the earlier per-instance
+file allocation with the fixed Secret convention.
 
 ## S01 — Confirm the integration baseline and package contract
 
@@ -121,22 +121,51 @@ explicit nulls, unknown fields, exact prefix/path quoting and integer intervals
 through `2^53 - 1`. Removing the staleness guard makes six cases fail. No Secret
 contents or workload bindings enter the contribution.
 
-## S05 — Resolve verifier Secrets and allocate file paths
+## S05 — Resolve verifier Secrets
 
-- [ ] Resolve package-declared references in the gateway namespace, check Tenant
+- [x] Resolve package-declared references in the gateway namespace, check Tenant
   access and selected key existence, and return a typed plan without Secret bytes
   in rendering context, diagnostics, status or policy data.
-- [ ] Allocate deterministic intended filenames/mount paths and record internal
-  projection requirements. Check planned/reserved-path collisions and layout
-  requirements; templates consume trusted paths. Actual workload mounts are deferred.
-- [ ] Cover the same Secret used by different instances, distinct Secret/data
-  keys, changed references and repeated allocation without hardcoded `keySource`
-  traversal. Restrict this implementation to `secretRef`.
+- [x] Resolve generic JSON pointers without hardcoded `keySource` traversal.
+  Restrict references to `secretRef`; reject namespace overrides and malformed
+  references before reading Secrets.
+- [x] Cover current Tenant grants, missing Secrets/keys and safe read errors;
+  return no partial result when a dependency cannot be resolved.
 
-**Verification:** resolver/allocation unit tests plus API-server reference tests;
-assert stable output, isolation and explicit errors before rendering.
+**Verification:** resolver unit tests plus API-server reference tests; assert
+authorization, metadata-only results and explicit errors before rendering.
 **Dependencies:** S01; gateway reference integration also needs S02.
-**Likely areas:** reference resolver, allocator and focused tests. **Size:** medium.
+**Likely areas:** reference resolver, authorization helper and focused tests.
+**Size:** medium.
+
+Verified on the API-key implementation branch with the full unit race suite,
+all 79 envtest specs, lint, build and gopls. Its earlier allocator uses per-instance
+hashed directories; S05a remains required before completing the rendering contract.
+
+## S05a — Derive fixed paths and group shared Secret projections
+
+- [ ] Replace per-instance path allocation with
+  `/var/run/praxis/auth/secrets/<secret-name>/<data-key>`. Preserve each data key
+  as its filename; auth type, instance/slot names, UIDs and Secret contents do not
+  affect paths. Packages cannot supply filename or layout requirements.
+- [ ] Separate per-slot paths from projection requirements. Group by namespace
+  and Secret name, with one intended read-only directory mount and the sorted
+  union of referenced keys. Repeated references share files; unreferenced keys
+  stay excluded. Volume names remain valid controller-generated identifiers.
+- [ ] Reject incompatible volume names and reserved/overlapping paths without
+  relocating files. Accept repeated references to the same projection. Keep
+  resolution confined to the gateway namespace and actual mounts deferred.
+
+**Verification:** unit tests cover exact paths, shared slots and instances,
+distinct Secrets/keys, long Secret names, valid data-key filenames, reordered
+references, selected-key unions and collisions.
+Content changes, instance/slot renames and same-name Secret replacement leave
+paths unchanged; changing Secret name/key changes the path. Update API-server
+reference tests to assert the new convention and continued safe failure behaviour.
+These fixtures do not enable multiple-instance authentication.
+**Dependencies:** S05. **Likely areas:** file planner, reference plan and focused
+unit/integration tests. **Size:** medium; split planner changes from caller updates
+if needed.
 
 ## S06 — Render and validate the default through Helm
 
@@ -146,18 +175,21 @@ assert stable output, isolation and explicit errors before rendering.
   replacement and attempts to override trusted context. Never fetch Secret
   contents from a template.
 - [ ] Render the real API-key chart and a differently shaped package fixture
-  through the same renderer. No schema bypass or API-key-specific dispatch exists.
+  through the same renderer. Assert the supplied fixed Secret path is used;
+  shared file references do not merge plugin configuration or identity. No schema
+  bypass or API-key-specific dispatch exists.
 
 **Verification:** `make test-unit` with schema rejection cases, supplied-path
 changes and malformed contributions. Rendering does not depend on cluster
 admission installation or readiness.
-**Dependencies:** S03–S05. **Likely areas:** renderer/contribution modules, tests
+**Dependencies:** S03–S05, S05a. **Likely areas:** renderer/contribution modules, tests
 and pinned module dependencies. **Size:** medium; separate dependency setup if needed.
 
 ## Checkpoint C2 — Secret references become valid plugin configuration
 
-- [ ] S04–S06 checks pass: templates consume allocated paths and no Secret bytes
-  or template-generated workload bindings appear in the contribution.
+- [ ] S04–S06, including S05a, pass: templates consume fixed resolved paths,
+  shared references produce one projection per Secret, and no Secret bytes or
+  template-generated workload bindings appear in the contribution.
 
 ## S07 — Provide the shared default AIGateway VAP
 
@@ -235,8 +267,9 @@ PPE settings against the targeted contract; live enforcement is deferred with S1
 ## S12 — Generate the gateway-owned Policy from authorized inputs
 
 - [ ] Resolve the gateway's ready Tenant, require an available and permitted
-  `apiKey` type, then resolve the Secret and allocate paths before invoking Helm.
-- [ ] Assemble the document and internal projection requirements before writes;
+  `apiKey` type, then resolve the Secret and derive fixed paths before invoking Helm.
+- [ ] Assemble the document and grouped selected-key projection requirements
+  before writes;
   create/update exactly one gateway-owned `praxis.io/v1alpha1 Policy` with the
   generated YAML in `spec.document`, without adopting user-owned resources.
 - [ ] Report denied permission, unavailable package, invalid input or unresolved
@@ -249,7 +282,7 @@ Policy and checks its owner and generated document. Run the core Policy controll
 and verify its acceptance independently of AIGateway serving readiness. Cover
 repeat/update, reference/permission failures and no partial output; no Proxy
 instance or workload is required.
-**Dependencies:** S02, S05, S09, S11 and the AIGateway reconciliation baseline.
+**Dependencies:** S02, S05a, S09, S11 and the AIGateway reconciliation baseline.
 **Likely areas:** gateway desired-state generation and focused integration tests.
 **Size:** medium; S13 is deferred and does not block Policy generation.
 
@@ -270,6 +303,8 @@ instance or workload is required.
   idempotently. Preserve user-owned resources and keep serving readiness separate
   from successful output generation. Content-only Secret updates must not embed
   verifier data or cause unnecessary Policy spec changes when its inputs are unchanged.
+  Rebuild the selected-key plan from current references; removing a consumer must
+  retain files still referenced by another consumer.
 
 **Verification:** event-mapping tests and envtest cover generation, loss, recovery,
 ownership and cleanup at the Policy boundary. Verify unchanged desired Policy
@@ -282,7 +317,7 @@ integration tests. **Size:** medium.
 - [ ] Supply Tenant, verifier Secret and AIGateway examples that produce the
   expected core Policy. Explain package defaults, optional prefix and identity mapping.
 - [ ] Explain administrator installation/extension of the shared VAP, Helm
-  validation, intended file allocation and
+  validation, the fixed Secret path convention, selected-key sharing and
   error feedback. State that mounts, filter-chain attachment and runtime enforcement
   await core integration; a generated Policy does not establish gateway readiness.
 - [ ] Run the documented control-plane workflow and relevant unit/integration,
@@ -306,18 +341,24 @@ The following tasks consume the generated Policy once the core workload API and
 reconciliation path are ready. They are not completion gates for this delivery.
 Serving readiness, access withdrawal and runtime validation claims belong here.
 
-### S10 — Project controller-allocated files through the core workload path
+### S10 — Project selected Secret files through the core workload path
 
 - [ ] Add or reuse the minimal typed same-namespace Secret file-projection support
   between the AI Gateway generation path and backing Proxy/workload reconciler.
-- [ ] Turn the S05 plan into matching read-only directory mounts and selected data
-  keys, without `subPath` or copying Secret bytes into generated configuration.
+- [ ] Turn the S05a plan into one read-only directory mount per referenced Secret
+  at `/var/run/praxis/auth/secrets/<secret-name>/`, projecting only the selected
+  keys under their original names. Combine shared references without duplicate
+  volumes/mounts; use no `subPath` or Secret bytes in generated configuration.
 - [ ] Validate collisions, reject invalid projections and preserve update
   propagation. Keep existing upstream credential/environment handling separate.
 
 **Verification:** core API/renderer tests and envtest inspect generated mounts,
-reference changes and matching policy paths. **Dependencies:** S01, S05 and the core
-workload baseline. **Likely areas:** core API, projection renderer, validation and
+selected-key unions, reference changes and matching policy paths. Removing one
+consumer retains keys still in use. Remove a key after its last reference, and
+remove the mount when no keys remain. Assert the workload uses the gateway's
+namespace; combining source namespaces needs a separate design.
+**Dependencies:** S01, S05a and the core workload baseline.
+**Likely areas:** core API, projection renderer, validation and
 tests, plus generated output. **Size:** split into API/validation and workload
 rendering slices if more than five authored files are required.
 

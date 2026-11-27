@@ -54,6 +54,20 @@ tokens use `~0` for `~` and `~1` for `/`; malformed pointers and unknown declara
 fields are rejected. The catalog validates declarations; S05 resolves the actual
 entry and authorizes its references.
 
+A slot is a name for a template input, not a filesystem layout. The controller
+derives its path as `/var/run/praxis/auth/secrets/<secret-name>/<data-key>`.
+Slots selecting the same Secret/key receive the same path, regardless of auth
+type or instance name. Content changes and same-name replacement retain paths.
+
+The metadata-only plan keeps slot paths separate from projection requirements.
+For each namespace/Secret, it records one read-only directory mount and the
+sorted union of referenced keys, preserving each key as its filename. Unreferenced
+keys are excluded. The controller chooses valid volume names and rejects reserved
+volume/path conflicts; packages cannot request alternate filenames or layouts.
+Actual mounts are deferred to core workload integration and must use directories
+without `subPath`. The convention assumes one source namespace per workload,
+matching the gateway's namespace.
+
 A package needing no files omits this file or declares an empty `secretFiles`
 map. HTTP-backed authentication therefore has no artificial verifier Secret
 requirement. ConfigMap references are outside the first delivery.
@@ -78,13 +92,14 @@ context:
   pluginName: auth-consumers
   files:
     keys:
-      path: /var/run/praxis/auth/allocated-directory/records.yaml
+      path: /var/run/praxis/auth/secrets/consumer-keys/keys.yaml
 ```
 
 `entry` is the flat public authentication object; these wrappers exist only in
 Helm values. The controller constructs `context` independently. User fields or
-chart defaults cannot replace its namespace, allocated names or file paths.
-The illustrated path is an allocation example, not a path naming algorithm.
+chart defaults cannot replace its namespace, allocated plugin name or resolved
+file paths. Templates consume the supplied path rather than reconstructing it
+from the entry.
 
 The package's `values.schema.json` validates this complete values object,
 including its own entry fields and the context it consumes. Apply entry defaults
