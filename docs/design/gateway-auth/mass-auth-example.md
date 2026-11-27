@@ -3,7 +3,6 @@
 Status: Worked proposal.
 
 Design: [Extensible gateway authentication](gateway-authentication.md).
-Delivery plan: [Authentication implementation plan](../../../tasks/plan.md).
 
 This example applies the proposed authentication API to a MaaS validation service.
 The service owns the API-key records. PPE sends the caller's key to that service
@@ -156,29 +155,6 @@ cached for 10 seconds. A revoked key can continue authenticating until its posit
 cache entry expires. These are explicit example settings, not a claim that all
 reference AuthPolicy cache behaviour is reproduced.
 
-## Boundaries requiring further work
-
-- **Credential selection:** the reference policy prefers a matching Bearer key
-  over `X-API-Key`, then uses Kubernetes TokenReview for other credentials. The
-  example above implements one header source. PPE's current lookup resolver
-  denies a missing configured header, so simply listing a second resolver does
-  not establish the required fallback, precedence or general OR behaviour.
-- **Subscription authorization:** the later `/internal/v1/subscriptions/select`
-  call uses verified identity plus the requested subscription/model. It belongs
-  after authentication as an ordered metadata fetch followed by authorization
-  checks in the same policy document. Source configuration and request-dependent
-  cache behaviour still need to be specified.
-- **Metadata and identity:** a generic metadata fetch exposes facts under
-  `metadata.*`; it does not automatically establish an authenticated subject.
-  The HTTP API-key provider performs the identity resolution in this example.
-- **Reference policy parity:** trusted identity-header propagation, rejection of
-  spoofed identity headers, key-minting restrictions, the health-path exemption
-  and custom denial responses are not demonstrated by this authentication
-  fragment.
-
-The PPE fields and HTTP contract above were checked against its source and
-documentation. End-to-end execution through a controller-generated gateway
-remains to be verified.
 
 ## References
 
