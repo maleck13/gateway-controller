@@ -22,9 +22,10 @@ independently of the Secret-backed `apiKey` type. Its proposed template location
 <extension-root>/aigateway/governance/auth/maasApiKey/
 ```
 
-The package supplies its schema, template, VAP with its enforcing binding, and
-documentation. The controller applies the admission resources before enabling
-the type. The Tenant must still grant permission to use it:
+The package supplies its schema, template and documentation. Its owner supplies
+admission rules for the platform administrator to add to the shared AIGateway
+VAP. The controller validates through Helm, and the Tenant must grant permission
+to use the type:
 
 ```yaml
 # Tenant.spec

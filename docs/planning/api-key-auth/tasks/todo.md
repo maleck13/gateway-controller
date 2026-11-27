@@ -14,17 +14,28 @@ Task IDs are retained: S10, S13 and S15 have moved to deferred core integration.
 No active task depends on those tasks. Keep authored changes around 3–5 files,
 splitting before coding where needed; include generated output with its source.
 
+Completed implementation items below record work verified in the prior session.
+Those code changes will be applied on a separate branch; this documentation
+update does not apply them.
+
 ## S01 — Confirm the integration baseline and package contract
 
-- [ ] Locate the Tenant/AIGateway input and reconciliation baseline and the core
+- [x] Locate the Tenant/AIGateway input and reconciliation baseline and the core
   Policy API/controller. Record the Policy generation integration points; core
   workload creation and filter-chain wiring are not prerequisites for this milestone.
-- [ ] Define package Secret-reference declarations, the trusted resolved-path
+- [x] Define package Secret-reference declarations, the trusted resolved-path
   context and structured policy contribution. Select and verify the pinned Helm
   Go rendering API, with schema validation enabled and no external CLI assumption.
-- [ ] Confirm API-key defaults, existing grant compatibility and admission
-  lifecycle within the agreed single-instance scope. Record unresolved
-  prerequisite work and the supported runtime version before relying on either.
+- [x] Confirm API-key defaults and record the targeted PPE contract revision.
+- [x] Define exact, case-sensitive Tenant grants within the single-instance scope.
+- [x] Assign cluster admission ownership to platform administrators; keep
+  controller checks limited to Tenant grants, Helm validation and references.
+
+Source/API integration points and the rendering contract are recorded in
+[the package contract](../package-contract.md). These are new APIs; no migration
+or backward-compatibility work is required. The controller does not manage or
+check readiness of admission resources. S07 provides the default VAP; S08 removes
+the earlier catalog admission requirement.
 
 **Verification:** inspect source and official library/runtime contracts; review a
 worked flat entry, reference declaration, resolved context and resulting policy.
@@ -33,54 +44,82 @@ contract alongside the design. **Size:** small investigation/documentation slice
 
 ## S02 — Add the flat auth envelope in the AI Gateway layer
 
-- [ ] Preserve the flat `name`/`authType` envelope and arbitrary nested JSON
+- [x] Preserve the flat `name`/`authType` envelope and arbitrary nested JSON
   through serialization, CRD storage and read-back. Instance names are unique;
   auth types remain open rather than an enum of built-ins.
-- [ ] Resolve Tenant authorization by type, including the explicit handling of
-  existing grant values agreed in S01. Keep upstream credential grants separate.
-- [ ] Generate the CRD/deepcopy output and use API-server validation for structural
+- [x] Resolve Tenant authorization by exact type ID. Keep upstream credential
+  grants separate.
+- [x] Generate the CRD/deepcopy output and use API-server validation for structural
   constraints. Reject more than one configured auth instance before publication
   using a runtime capability check, while keeping the CRD list extensible.
 
 **Verification:** unit serialization tests and `make test-integration` prove
 unknown fields survive create/get/update and invalid envelopes/grants are handled
-as specified. **Dependencies:** S01 and the AI Gateway API baseline.
+as specified. **Dependencies:** S01's input contract and the AI Gateway API baseline.
 **Likely areas:** Tenant/AIGateway types, focused API tests and generated files.
-**Size:** medium; split grant compatibility from envelope work if required.
+**Size:** medium; split Tenant grant handling from envelope work if required.
+
+Implemented with generated schemas/deepcopies and matching samples. Verified
+with `make test-unit` (race), all 76 envtest specs, `make lint`, `go build ./...`
+and gopls. Tests cover Kubernetes conversion, DeepCopy isolation, create/get/update,
+status patches, exact grants and the single-instance limit. Removing the reserved
+field guard makes its collision tests fail.
 
 ## S03 — Discover auth packages generically
 
-- [ ] Build a startup catalog from default and extension roots under
+- [x] Build a startup catalog from default and extension roots under
   `aigateway/governance/auth/<authType>/`, keyed by directory name.
-- [ ] Validate metadata, schema, reference declarations and mandatory admission
-  manifests; reject duplicate IDs and incomplete packages without overriding defaults.
-- [ ] Exercise a second package fixture with different input/reference fields to
+- [x] Validate metadata, schema and reference declarations; reject duplicate IDs
+  and incomplete packages without overriding defaults.
+- [x] Exercise a second package fixture with different input/reference fields to
   prove discovery needs no auth-specific switch, enum or registry file.
 
 **Verification:** hermetic filesystem tests include projected-volume layouts,
-missing artifacts, malformed metadata and collisions. **Dependencies:** S01.
+missing artifacts, malformed metadata and collisions. **Dependencies:** the
+discovery contract from S01; Tenant grants and cluster admission are outside
+the filesystem loader.
 **Likely areas:** catalog module, tests and package fixtures. **Size:** medium.
+
+Implemented in `internal/auth`. Verified with the API/controller race suite,
+`make lint`, `go build ./...`, `go vet ./internal/auth` and `gopls check`.
+Tests include real projected-volume symlinks, independent file snapshots,
+alternate reference fields and rejection of malformed/duplicate packages.
+Review also verified that removing duplicate detection makes its test fail.
+Startup wiring remains S09; schema compilation and rendering remain S06.
 
 ## Checkpoint C1 — Inputs and generic discovery are defined
 
-- [ ] S01–S03 checks pass on the AI Gateway baseline; the core Policy is the
+- [x] S01–S03 checks pass on the AI Gateway baseline; the core Policy is the
   agreed output and no workload implementation is required to generate it.
 
 ## S04 — Create the API-key chart and schema
 
-- [ ] Add the rendering assets under `templates/aigateway/governance/auth/apiKey/`:
+- [x] Add the rendering assets under `templates/aigateway/governance/auth/apiKey/`:
   chart metadata, flat input schema, reference declaration and contribution template.
-- [ ] Configure the selected header, optional prefix, controller-supplied file
+- [x] Configure the selected header, optional prefix, controller-supplied file
   path, refresh/staleness and `user`/`groups` identity mapping. The chart neither
   chooses mount paths nor creates the complete policy document.
-- [ ] Enforce required Secret name/key, field types, unknown-field rejection and
-  interval constraints with the agreed defaults. S07 completes the required
-  admission artifacts before this package can be registered.
+- [x] Enforce required Secret name/key, field types, unknown-field rejection and
+  interval constraints with the agreed defaults. The package does not require
+  admission artifacts; S07 adds independent cluster admission validation.
+
+Carry forward the former fixed-CRD cases: refresh `0`, staleness `-1`, Secret key
+`keys/api`, an empty Secret key and the 5/30-second defaults. These belong to
+the package schema and S07 admission parity, rather than the generic auth envelope.
 
 **Verification:** focused schema/template cases cover defaults and overrides,
 malformed fields and changed supplied paths. **Dependencies:** S01.
 **Likely areas:** default chart rendering assets and focused cases. **Size:** medium;
 separate schema and template tests if the authoring surface exceeds five files.
+
+S04 introduces the pinned Helm Go SDK for chart tests. S06 adds the production
+renderer.
+
+Verified with real Helm rendering through YAML and JSON-number inputs, the full
+unit race suite, all 76 envtest specs, lint, build and gopls. Tests cover defaults,
+explicit nulls, unknown fields, exact prefix/path quoting and integer intervals
+through `2^53 - 1`. Removing the staleness guard makes six cases fail. No Secret
+contents or workload bindings enter the contribution.
 
 ## S05 — Resolve verifier Secrets and allocate file paths
 
@@ -110,8 +149,8 @@ assert stable output, isolation and explicit errors before rendering.
   through the same renderer. No schema bypass or API-key-specific dispatch exists.
 
 **Verification:** `make test-unit` with schema rejection cases, supplied-path
-changes and malformed contributions. Admission/package registration is tested
-only after S07 completes the default's required artifacts.
+changes and malformed contributions. Rendering does not depend on cluster
+admission installation or readiness.
 **Dependencies:** S03–S05. **Likely areas:** renderer/contribution modules, tests
 and pinned module dependencies. **Size:** medium; separate dependency setup if needed.
 
@@ -120,56 +159,62 @@ and pinned module dependencies. **Size:** medium; separate dependency setup if n
 - [ ] S04–S06 checks pass: templates consume allocated paths and no Secret bytes
   or template-generated workload bindings appear in the contribution.
 
-## S07 — Complete the package's VAP and validation parity
+## S07 — Provide the shared default AIGateway VAP
 
-- [ ] Supply the default's mandatory VAP and enforcing binding for flat AIGateway
-  `apiKey` entries, covering common fields, required nested references, types,
-  unknown fields and refresh/staleness defaults and relationships.
+- [ ] Supply a shared AIGateway ValidatingAdmissionPolicy and enforcing binding
+  as standalone cluster manifests, initially validating `apiKey` entries. Cover
+  required references, field types, unknown fields, prefix/header rules and
+  refresh/staleness defaults, bounds and relationships.
 - [ ] Scope admission to the intended AIGateway operations/auth type, leaving
   unrelated types and status updates unaffected.
-- [ ] Use shared valid/invalid cases for VAP and Helm validation, and document the
-  package inputs, defaults, verifier-record shape and identity mapping.
+- [ ] Test VAP and Helm validation against shared valid/invalid cases, including
+  omitted/null values and whole-number representations. Supply administrator
+  installation instructions and an example of extending the VAP for a custom
+  auth type using rules maintained by its template owner.
 
-**Verification:** actual API-server admission tests and Helm parity cases agree,
-including multiple-entry shapes independently of first-milestone runtime support.
-**Dependencies:** S02, S04, S06. **Likely areas:** package admission manifest,
-README, parity fixtures and integration tests. **Size:** medium.
+**Verification:** integration tests install the supplied manifests directly and
+observe actual API-server admission denial. Helm parity cases agree, including
+multiple-entry shapes independently of first-milestone runtime support. The
+controller neither installs the resources nor waits for them.
+**Dependencies:** S02, S04. **Likely areas:** shared admission manifests, operator
+documentation, parity fixtures and integration tests. **Size:** medium.
 
-## S08 — Register package admission resources through the controller
+## S08 — Remove controller ownership of cluster admission
 
-- [ ] Apply each discovered package's VAP and enforcing binding once per type,
-  using explicit RBAC. Validate allowed resource kinds, auth-type scope and names;
-  do not take over unrelated cluster policies.
-- [ ] Keep a type unusable when installation, permissions or enforcement checks
-  fail. Account for API-server propagation instead of treating a write as proof
-  that admission is active.
-- [ ] Reconcile policy/binding drift and removal using the lifecycle agreed in S01.
-  Registration is separate from per-gateway policy rendering.
+- [x] Remove mandatory per-package admission manifests and admission validation
+  from catalog discovery. No controller admission RBAC, watches or readiness
+  checks are introduced.
+- [x] Prove packages can be discovered and rendered without admission resources;
+  keep Helm validation and Tenant authorization independent of cluster admission.
 
-**Verification:** envtest covers installation, denied permissions, missing/broken
-artifacts, enforcement and recovery. **Dependencies:** S03, S07.
-**Likely areas:** admission registrar, RBAC and registration tests. **Size:** medium.
+**Verification:** catalog and real-chart tests pass without per-package VAPs;
+admission-only artifacts cannot block discovery. **Dependencies:** S03, S04.
+**Likely areas:** catalog and focused tests. **Size:** small.
 
-## S09 — Ship the default and wire startup registration
+Removed the admission parser and manifest requirement. Catalog tests cover
+missing/unrelated admission files and successful discovery of the default chart.
+
+## S09 — Ship the default and wire startup discovery
 
 - [ ] Include the complete `apiKey` package in the controller image and load the
-  catalog/registrar for the AI Gateway controller path.
+  catalog for the AI Gateway controller path.
 - [ ] Define and test startup configuration before using it in deployment
   manifests. Keep default and extension roots separate and compatible with
   non-root/read-only operation.
-- [ ] Surface catalog/registration failures and pass only usable packages into
+- [ ] Surface catalog failures and pass discovered packages into
   gateway reconciliation. Package changes require a rollout.
 
 **Verification:** configuration tests and image/startup smoke checks show the
-bundled default is discovered and its admission resources are registered without
-an installed Helm CLI. **Dependencies:** S03, S06–S08 and the AI controller baseline.
+bundled default is discovered without an installed Helm CLI or controller access
+to admission resources. **Dependencies:** S03, S06, S08 and the AI controller baseline.
 **Likely areas:** manager wiring, Dockerfile, deployment config and tests.
 **Size:** medium; split image packaging from startup integration if needed.
 
-## Checkpoint C3 — The default package is registered and validated
+## Checkpoint C3 — The default package and administrator admission assets are ready
 
-- [ ] S07–S09 checks pass: the controller installs VAP/binding resources,
-  admission enforces them and Helm repeats validation. Installation is not a Tenant grant.
+- [ ] S07–S09 checks pass: the default package ships with the controller, Helm
+  validates rendering, and separately installed VAP/binding manifests reject
+  invalid default-type inputs. Tenant grants remain required.
 
 ## S11 — Assemble one policy for the API-key instance
 
@@ -189,7 +234,7 @@ PPE settings against the targeted contract; live enforcement is deferred with S1
 
 ## S12 — Generate the gateway-owned Policy from authorized inputs
 
-- [ ] Resolve the gateway's ready Tenant, require an installed and permitted
+- [ ] Resolve the gateway's ready Tenant, require an available and permitted
   `apiKey` type, then resolve the Secret and allocate paths before invoking Helm.
 - [ ] Assemble the document and internal projection requirements before writes;
   create/update exactly one gateway-owned `praxis.io/v1alpha1 Policy` with the
@@ -216,7 +261,7 @@ instance or workload is required.
 
 ## S14 — Reconcile Policy output when inputs change
 
-- [ ] Watch Tenant grants, Secret references/data, admission resources and owned
+- [ ] Watch Tenant grants, Secret references/data and owned
   Policies; reconcile affected outputs without an AIGateway spec edit.
 - [ ] Define and test the disposition of an existing owned Policy when permission
   or a required reference is lost. Never publish a fallback document with auth
@@ -229,14 +274,15 @@ instance or workload is required.
 **Verification:** event-mapping tests and envtest cover generation, loss, recovery,
 ownership and cleanup at the Policy boundary. Verify unchanged desired Policy
 specs remain stable; actual file reload/traffic revocation stays in deferred S15.
-**Dependencies:** S08, S12. **Likely areas:** event/lifecycle handling and focused
+**Dependencies:** S12. **Likely areas:** event/lifecycle handling and focused
 integration tests. **Size:** medium.
 
 ## S16 — Document and verify the Policy-generation workflow
 
 - [ ] Supply Tenant, verifier Secret and AIGateway examples that produce the
   expected core Policy. Explain package defaults, optional prefix and identity mapping.
-- [ ] Explain VAP registration, Helm validation, intended file allocation and
+- [ ] Explain administrator installation/extension of the shared VAP, Helm
+  validation, intended file allocation and
   error feedback. State that mounts, filter-chain attachment and runtime enforcement
   await core integration; a generated Policy does not establish gateway readiness.
 - [ ] Run the documented control-plane workflow and relevant unit/integration,

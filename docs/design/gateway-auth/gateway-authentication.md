@@ -66,20 +66,19 @@ changes require an explicit migration.
 
 ### Two validation layers
 
-Every auth package must provide both:
+1. **Admission validation:** the project provides a shared AIGateway
+   ValidatingAdmissionPolicy (VAP) and enforcing binding for default auth types.
+   The platform administrator installs these cluster-scoped resources and extends
+   the VAP with the template owner's validation rules when enabling a custom type.
+2. **Render validation:** the controller renders with the package's
+   `values.schema.json` validation enabled, plus template checks, before policy
+   publication. This runs even when admission has already validated the resource.
 
-1. **Admission validation:** a Kubernetes ValidatingAdmissionPolicy (VAP) and
-   enforcing binding, which the controller applies when registering the package.
-   They reject invalid AIGateway creates and updates for that auth type before
-   persistence. The type is enabled only after its admission resources are
-   installed; installation failure prevents its use.
-2. **Render validation:** Helm rendering with the package's `values.schema.json`
-   validation enabled, plus template checks, before policy publication. This runs
-   even when admission has already validated the resource.
-
-VAP rules use CEL; they do not execute Helm or its schema. Package owners maintain
-equivalent constraints and test both layers against the same inputs. Reference
-authorization and runtime credential validation remain separate checks.
+VAP rules use CEL; they do not execute Helm or its schema. Default and extension
+owners test their admission rules against the same inputs as Helm validation.
+The controller does not install, watch or check readiness of admission resources.
+Tenant grants and Helm validation are sufficient controller gates for now.
+Reference authorization and runtime credential validation remain separate checks.
 
 ## Template discovery and extension
 
@@ -94,8 +93,6 @@ Templates are organised by resource, governance concern and authentication type:
       README.md
       templates/
         contribution.yaml
-      admission/
-        validation.yaml
     oidc/
       ...
 
@@ -117,12 +114,11 @@ Extension owners maintain, document and test their packages, including identity
 mapping and compatibility with their controller/runtime versions. The controller
 project tests the shared discovery, validation and policy composition contract.
 
-Each package provides release metadata, an input schema, a VAP with its binding,
-and documentation of settings, identity mapping and runtime requirements. The
-controller rejects catalogs with duplicate type IDs or incomplete packages.
-Admission resources are registered once per type, independently of per-gateway
-policy rendering. The controller deployment requires permission to manage them.
-Unavailable types cause gateway configuration errors.
+Each package provides release metadata, an input schema and documentation of
+settings, identity mapping and runtime requirements. The controller rejects
+catalogs with duplicate type IDs or incomplete packages. Admission resources are
+managed separately by the platform administrator and are not required package
+artifacts. Unavailable types cause gateway configuration errors.
 
 Package changes require a controller rollout in the first version. Gateway
 authors select an auth type and configure its settings in the AIGateway resource.

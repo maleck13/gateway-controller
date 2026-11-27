@@ -3,6 +3,7 @@
 Source design: [Gateway authentication](../../design/gateway-auth/gateway-authentication.md).
 Task checklist: [Policy-generation tasks](tasks/todo.md#gateway-authentication-implementation).
 Follow-up example: [MaaS HTTP validation](../../design/gateway-auth/mass-auth-example.md).
+Package implementation contract: [Discovery and rendering](package-contract.md).
 
 ## Goal
 
@@ -25,12 +26,15 @@ package fixture proving dispatch without auth-specific controller code.
 
 ## Prerequisites and output boundary
 
-The inspected checkout registers the core Proxy and Policy APIs, but not the
-Tenant/AIGateway layer. The [test structure guide](../../../test/README.md#api-layers)
-identifies the `aigateway` development branch as that layer's home. S01 locates
-its implementation and records the integration points. Publishing a gateway-owned
-Policy still requires those input resources and their reconciliation path;
-package/rendering work can start independently.
+Policy generation integrates the Tenant and AIGateway layer with the core Policy
+API. The AIGateway reconciler resolves Tenant readiness and authorizes flat
+authentication entries by exact type ID. The first delivery rejects more than
+one configured instance while the CRD retains an extensible list. S12 extends
+this reconciliation path to own the generated Policy. The
+[test structure guide](../../../test/README.md#api-layers) describes the two layers.
+
+Spec validation and Tenant readiness do not establish serving readiness.
+Policy generation must not be presented as proof of traffic enforcement.
 
 The core Policy API already accepts a YAML `spec.document` and optional filter
 settings. Its current controller checks YAML parsing and records acceptance;
@@ -60,9 +64,9 @@ core workload path is a future consumer, not a prerequisite for Policy generatio
    grant handling, and discover packages generically.
 2. **Default rendering — S04–S06:** create the API-key chart, resolve Secret
    references and allocate intended paths, then render through Helm validation.
-3. **Admission and installation — S07–S09:** complete the mandatory VAP/binding,
-   test admission/render parity, register admission resources through the
-   controller and ship the default package. Failed registration prevents use.
+3. **Admission assets and packaging — S07–S09:** provide a shared default
+   AIGateway VAP/binding with parity tests and administrator instructions, remove
+   controller admission ownership, and ship the default template package.
 4. **Policy output — S11–S12:** assemble the document and reconcile exactly one
    gateway-owned core Policy from authorized inputs.
 5. **Lifecycle and completion — S14, S16:** test changes and errors at the Policy
@@ -77,15 +81,17 @@ active control-plane deliverable.
 
 - Flat auth entries use reserved `name` and `authType`, with package-owned fields
   such as `header`, optional `prefix`, `keySource.secretRef`, `refreshSeconds` and
-  `maxStalenessSeconds`. Preserve arbitrary JSON for future types; handle existing
-  Tenant grant values explicitly rather than silently changing their casing.
+  `maxStalenessSeconds`. Preserve arbitrary JSON for future types. Tenant grants
+  match auth type IDs exactly, including case.
 - Discover `aigateway/governance/auth/<authType>/` from default and extension roots
   at startup. Reject duplicate IDs and incomplete packages; use no separate
   registry or auth-specific switch. Default packages are controller-maintained.
-- Every package supplies a VAP and enforcing binding. The controller applies them
-  once per type with explicit permissions and enables the type only after
-  registration/enforcement checks. Helm schema/template validation runs on every
-  render; shared cases check equivalence between the two layers.
+- The project provides a shared AIGateway VAP and enforcing binding for default
+  auth types, initially `apiKey`. Platform administrators install these resources
+  and extend the VAP with rules supplied by extension owners. The controller does
+  not manage or check readiness of cluster admission resources. Helm validation
+  and Tenant grants are sufficient controller gates for now; shared cases check
+  admission/render parity.
 - Packages declare Secret input locations. The controller checks same-namespace
   access and data-key existence, allocates stable paths and supplies trusted
   context. Templates cannot override that context or create workload bindings.
@@ -105,16 +111,23 @@ active control-plane deliverable.
   Policy with authentication removed. Reconcile owned output and input errors
   consistently; Policy generation and AIGateway serving readiness remain distinct.
 
-## Decisions to close in S01
+## Contract decisions and remaining lifecycle work
 
-Define the reference declaration format, reserved context keys and contribution
-shape, then select a pinned Helm Go API from official documentation. Confirm the
-expected defaults (`X-API-Key`, 5-second refresh, 30-second staleness, staleness at
-least refresh) against the targeted PPE contract. No Helm CLI is assumed in the
-controller image, and Secret contents are never template inputs.
+The API-key package defaults are `X-API-Key`, a 5-second refresh and a 30-second
+staleness ceiling, with staleness at least refresh. These are explicit package
+defaults, checked against the targeted PPE contract. No Helm CLI is assumed in
+the controller image, and Secret contents are never template inputs.
 
-Record admission propagation/drift/upgrade handling and the disposition of an
-existing owned Policy when its Tenant grant or Secret reference becomes invalid.
+The [package contract](package-contract.md) records the chosen reference file,
+startup snapshot, separate `entry`/`context` values and structured contribution.
+Helm v3.22.1 APIs and the targeted PPE source revision have been inspected. S04
+introduces the SDK for chart tests, and S06 adds the production renderer. S07
+provides the shared default AIGateway VAP as administrator-installed manifests;
+S08 removes the earlier per-package admission requirement. These are new APIs;
+existing-resource migration and backward compatibility are outside this work.
+
+S14 defines the disposition of an existing owned Policy when its Tenant grant or
+Secret reference becomes invalid.
 Tests must distinguish publication of current desired output from the future
 runtime's response to Policy removal or changes. Do not claim runtime access
 withdrawal in this milestone.
@@ -128,9 +141,10 @@ must contain the expected plugin/header, file path, mapping, intervals,
 no Secret bytes. Core YAML acceptance alone is not enough to prove those fields.
 
 Integration tests follow [test/README.md](../../../test/README.md) and run the real API
-server. They create Tenant, Secret and AIGateway inputs; verify VAP registration
-and rejection; exercise Helm validation and reference failures; and read back the
-owned Policy from the core API. Check repeat reconciliation, input updates,
+server. They create Tenant, Secret and AIGateway inputs; install the supplied VAP
+manifests directly and verify rejection; exercise Helm validation and reference
+failures; and read back the owned Policy from the core API. Check repeat
+reconciliation, input updates,
 ownership conflicts, dependency loss/recovery and cleanup. Run the existing core
 Policy controller to observe acceptance without manually writing its status.
 
@@ -139,7 +153,7 @@ Completion requires all of the following:
 - A valid, authorized input produces exactly one correctly owned core Policy.
 - The Policy passes core API validation and the core controller's current checks;
   focused tests establish the generated PPE configuration's expected structure.
-- Invalid input, missing Secret/key, denied grants, failed admission registration
+- Invalid input, missing Secret/key, denied grants, failed rendering
   and unsupported auth combinations do not produce partially generated output.
 - Intended paths are deterministic and consistent with the internal projection
   requirements; no actual Pod, mount or Proxy instance is required for this proof.
