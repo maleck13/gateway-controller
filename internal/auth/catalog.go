@@ -99,7 +99,7 @@ func loadPackage(source fs.FS) (Package, error) {
 	if err := snapshotFiles(source, ".", files); err != nil {
 		return Package{}, err
 	}
-	for _, filename := range []string{"Chart.yaml", "values.schema.json", "README.md", "templates/contribution.yaml", "admission/validation.yaml"} {
+	for _, filename := range []string{"Chart.yaml", "values.schema.json", "README.md", "templates/contribution.yaml"} {
 		if len(bytes.TrimSpace(files[filename])) == 0 {
 			return Package{}, fmt.Errorf("%s is required and must not be empty", filename)
 		}
@@ -138,9 +138,6 @@ func loadPackage(source fs.FS) (Package, error) {
 				return Package{}, fmt.Errorf("references.yaml: slot %q requires a name and an RFC6901 pointer starting with /", slot)
 			}
 		}
-	}
-	if err := validateAdmission(files["admission/validation.yaml"]); err != nil {
-		return Package{}, fmt.Errorf("admission/validation.yaml: %w", err)
 	}
 	return Package{ChartName: chart.Name, Version: chart.Version, Files: files, SecretFiles: references.SecretFiles}, nil
 }

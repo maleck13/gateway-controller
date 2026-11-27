@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -53,11 +52,12 @@ func TestDiscoverSnapshotsAllChartFiles(t *testing.T) {
 	source := packageFS("apiKey")
 	source[packagePath("apiKey", "values.yaml")] = &fstest.MapFile{Data: []byte("header: X-API-Key\n")}
 	source[packagePath("apiKey", "templates/_helpers.tpl")] = &fstest.MapFile{Data: []byte("{{- define \"name\" -}}auth{{- end -}}")}
+	source[packagePath("apiKey", "assets/notes.txt")] = &fstest.MapFile{Data: []byte("Packaged chart data.\n")}
 	catalog, err := Discover(Source{Name: "defaults", FS: source, Required: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"values.yaml", "templates/_helpers.tpl", "admission/validation.yaml"} {
+	for _, name := range []string{"values.yaml", "templates/_helpers.tpl", "assets/notes.txt"} {
 		want := string(source[packagePath("apiKey", name)].Data)
 		source[packagePath("apiKey", name)].Data[0] = '!'
 		if got := string(catalog["apiKey"].Files[name]); got != want {
@@ -80,6 +80,30 @@ func TestDiscoverWithoutSecretFiles(t *testing.T) {
 	}
 	if len(catalog["externalAuth"].SecretFiles) != 0 {
 		t.Fatalf("unexpected Secret dependency: %v", catalog["externalAuth"].SecretFiles)
+	}
+}
+
+func TestDiscoverDoesNotRequireOrValidateAdmissionArtifacts(t *testing.T) {
+	t.Parallel()
+	for name, artifact := range map[string]*fstest.MapFile{
+		"absent":    nil,
+		"unrelated": {Data: []byte("unrelated: [not valid YAML")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := packageFS("customAuth")
+			filename := packagePath("customAuth", "admission/validation.yaml")
+			delete(source, filename)
+			if artifact != nil {
+				source[filename] = artifact
+			}
+			catalog, err := Discover(Source{Name: "extensions", FS: source, Required: true})
+			if err != nil {
+				t.Fatalf("admission artifacts must not control discovery: %v", err)
+			}
+			if catalog["customAuth"].AuthType != "customAuth" {
+				t.Fatal("package was not discovered")
+			}
+		})
 	}
 }
 
@@ -126,7 +150,7 @@ func TestDiscoverRejectsDuplicateTypesAcrossSources(t *testing.T) {
 
 func TestDiscoverRejectsIncompletePackages(t *testing.T) {
 	t.Parallel()
-	for _, filename := range []string{"Chart.yaml", "values.schema.json", "README.md", "templates/contribution.yaml", "admission/validation.yaml"} {
+	for _, filename := range []string{"Chart.yaml", "values.schema.json", "README.md", "templates/contribution.yaml"} {
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
 			source := packageFS("apiKey")
@@ -169,18 +193,6 @@ func TestDiscoverRejectsMalformedPackages(t *testing.T) {
 		{name: "invalid pointer escape", file: "references.yaml", data: "secretFiles:\n  keys: /key~2source/secretRef\n"},
 		{name: "trailing pointer escape", file: "references.yaml", data: "secretFiles:\n  keys: /keySource~\n"},
 		{name: "non-string reference", file: "references.yaml", data: "secretFiles:\n  keys: 42\n"},
-		{name: "malformed admission", file: "admission/validation.yaml", data: "kind: ["},
-		{name: "duplicate admission key", file: "admission/validation.yaml", data: strings.Replace(admissionManifest("apiKey"), "kind: ValidatingAdmissionPolicy\n", "kind: Secret\nkind: ValidatingAdmissionPolicy\n", 1)},
-		{name: "unsupported resource", file: "admission/validation.yaml", data: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: ignored\n"},
-		{name: "missing binding", file: "admission/validation.yaml", data: policyManifest("apiKey")},
-		{name: "wrong admission API", file: "admission/validation.yaml", data: strings.ReplaceAll(admissionManifest("apiKey"), "admissionregistration.k8s.io/v1", "admissionregistration.k8s.io/v1beta1")},
-		{name: "unlinked binding", file: "admission/validation.yaml", data: strings.ReplaceAll(admissionManifest("apiKey"), "policyName: auth-apikey", "policyName: another-policy")},
-		{name: "non-enforcing binding", file: "admission/validation.yaml", data: strings.ReplaceAll(admissionManifest("apiKey"), "[Deny]", "[Warn]")},
-		{name: "unknown binding action", file: "admission/validation.yaml", data: strings.ReplaceAll(admissionManifest("apiKey"), "[Deny]", "[Deny, Allow]")},
-		{name: "duplicate binding action", file: "admission/validation.yaml", data: strings.ReplaceAll(admissionManifest("apiKey"), "[Deny]", "[Deny, Deny]")},
-		{name: "unidentified admission resource", file: "admission/validation.yaml", data: admissionManifest("apiKey") + "---\nunknown: resource\n"},
-		{name: "multiple policies", file: "admission/validation.yaml", data: admissionManifest("apiKey") + "---\n" + policyManifest("apiKey")},
-		{name: "missing policy name", file: "admission/validation.yaml", data: strings.Replace(admissionManifest("apiKey"), "name: auth-apikey", "name: ''", 1)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,41 +273,10 @@ func packageFS(authType string) fstest.MapFS {
 		"README.md":                   "Authentication package.\n",
 		"templates/contribution.yaml": "plugins: []\n",
 		"references.yaml":             "secretFiles:\n  keys: /keySource/secretRef\n",
-		"admission/validation.yaml":   admissionManifest(authType),
 	}
 	source := fstest.MapFS{}
 	for filename, data := range files {
 		source[packagePath(authType, filename)] = &fstest.MapFile{Data: []byte(data)}
 	}
 	return source
-}
-
-func policyManifest(authType string) string {
-	return fmt.Sprintf(`apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: auth-%s
-spec:
-  failurePolicy: Fail
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [aigateway.praxis.io]
-        apiVersions: [v1alpha1]
-        operations: [CREATE, UPDATE]
-        resources: [aigateways]
-  validations:
-    - expression: "true"
-`, strings.ToLower(authType))
-}
-
-func admissionManifest(authType string) string {
-	return policyManifest(authType) + fmt.Sprintf(`---
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: auth-%s
-spec:
-  policyName: auth-%s
-  validationActions: [Deny]
-`, strings.ToLower(authType), strings.ToLower(authType))
 }
