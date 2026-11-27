@@ -88,6 +88,12 @@ func (r *AIGatewayReconciler) validateAndUpdateStatus(ctx context.Context, gw *a
 		msg = fmt.Sprintf("Tenant %q is not ready", gw.Spec.TenantRef.Name)
 	}
 
+	if ready && gw.Spec.Governance != nil && len(gw.Spec.Governance.Authentication) > 1 {
+		ready = false
+		reason = aigatewayv1alpha1.ReasonInvalid
+		msg = "Only one authentication entry is currently supported."
+	}
+
 	// Validate authentication types are a subset of the Tenant's authorized types.
 	if ready && gw.Spec.Governance != nil {
 		authorizedTypes := make(map[aigatewayv1alpha1.IdentityType]bool, len(tenant.Spec.AuthorizedIdentities))
@@ -96,10 +102,10 @@ func (r *AIGatewayReconciler) validateAndUpdateStatus(ctx context.Context, gw *a
 		}
 
 		for _, auth := range gw.Spec.Governance.Authentication {
-			if !authorizedTypes[auth.Type] {
+			if !authorizedTypes[auth.AuthType] {
 				ready = false
 				reason = aigatewayv1alpha1.ReasonInvalid
-				msg = fmt.Sprintf("authentication type %q is not authorized by Tenant %q", auth.Type, tenant.Name)
+				msg = fmt.Sprintf("authentication type %q is not authorized by Tenant %q", auth.AuthType, tenant.Name)
 				break
 			}
 		}

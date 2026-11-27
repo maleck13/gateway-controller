@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -107,7 +108,7 @@ var _ = Describe("AIGateway CRD", func() {
 		spec.Runtime = &aigatewayv1alpha1.RuntimeSpec{}
 		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
 			Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-				{Type: aigatewayv1alpha1.IdentityTypeAPIKey},
+				{Name: "consumers", AuthType: aigatewayv1alpha1.IdentityTypeAPIKey},
 			},
 		}
 		gw := &aigatewayv1alpha1.AIGateway{
@@ -124,11 +125,66 @@ var _ = Describe("AIGateway CRD", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gw), got)).To(Succeed())
 		Expect(got.Spec.Runtime.Replicas).NotTo(BeNil())
 		Expect(*got.Spec.Runtime.Replicas).To(Equal(int32(1)))
-		auth := got.Spec.Governance.Authentication[0]
-		Expect(auth.RefreshSeconds).NotTo(BeNil())
-		Expect(*auth.RefreshSeconds).To(Equal(int32(5)))
-		Expect(auth.MaxStalenessSeconds).NotTo(BeNil())
-		Expect(*auth.MaxStalenessSeconds).To(Equal(int32(30)))
+		Expect(got.Spec.Governance.Authentication[0].Fields).To(BeEmpty(),
+			"the generic CRD must not inject provider defaults")
+	})
+
+	DescribeTable("requires common authentication fields",
+		func(ctx context.Context, entry map[string]any) {
+			gateway := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": aigatewayv1alpha1.SchemeGroupVersion.String(), "kind": "AIGateway",
+				"metadata": map[string]any{"name": "missing-auth-fields", "namespace": newTestNamespace(ctx)},
+				"spec": map[string]any{
+					"tenantRef": map[string]any{"name": "owner"}, "endpoint": map[string]any{"port": int64(8443)},
+					"mcp": map[string]any{}, "governance": map[string]any{"authentication": []any{entry}},
+				},
+			}}
+			err := k8sClient.Create(ctx, gateway)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected missing common-field validation, got %v", err)
+		},
+		Entry("missing name", map[string]any{"authType": "custom"}),
+		Entry("missing authType", map[string]any{"name": "consumers"}),
+		Entry("provider fields do not replace common fields",
+			map[string]any{"endpoint": "https://validator.example.com"}),
+		Entry("case-distinct keys do not replace common fields",
+			map[string]any{"Name": "consumers", "AuthType": "custom"}),
+	)
+
+	It("preserves arbitrary provider JSON through create, read and update", func(ctx context.Context) {
+		const initial = `{"name":"consumers","authType":"externalApiKey",` +
+			`"nested":{"values":[null,true,9007199254740993]},"optional":null,"Name":"provider","AuthType":false}`
+		var auth aigatewayv1alpha1.IdentityTypeSpec
+		Expect(json.Unmarshal([]byte(initial), &auth)).To(Succeed())
+		spec := validAIGatewaySpec()
+		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
+			Authentication: []aigatewayv1alpha1.IdentityTypeSpec{auth, {Name: "second", AuthType: "externalApiKey"}},
+		}
+		gateway := &aigatewayv1alpha1.AIGateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "provider-fields", Namespace: newTestNamespace(ctx)}, Spec: spec,
+		}
+		Expect(k8sClient.Create(ctx, gateway)).To(Succeed(),
+			"the CRD permits multiple named instances of the same open auth type")
+		DeferCleanup(func(ctx context.Context) error {
+			return client.IgnoreNotFound(k8sClient.Delete(ctx, gateway))
+		})
+		got := &aigatewayv1alpha1.AIGateway{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gateway), got)).To(Succeed())
+		data, err := json.Marshal(got.Spec.Governance.Authentication[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(initial))
+		Expect(string(got.Spec.Governance.Authentication[0].Fields["nested"])).To(ContainSubstring("9007199254740993"))
+		Eventually(func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(gateway), got); err != nil {
+				return err
+			}
+			got.Spec.Governance.Authentication[0].Fields["nested"] = json.RawMessage(`{"values":[false,9007199254740995]}`)
+			got.Spec.Governance.Authentication[0].Fields["added"] = json.RawMessage(`{"items":["a",null]}`)
+			return k8sClient.Update(ctx, got)
+		}).Should(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gateway), got)).To(Succeed())
+		Expect(string(got.Spec.Governance.Authentication[0].Fields["nested"])).To(ContainSubstring("9007199254740995"))
+		Expect(got.Spec.Governance.Authentication[0].Fields["added"]).To(MatchJSON(`{"items":["a",null]}`))
+		Expect(got.Spec.Governance.Authentication[0].Fields["optional"]).To(MatchJSON(`null`))
 	})
 
 	It("rejects an AIGateway submitted with no spec", func(ctx context.Context) {
@@ -203,21 +259,26 @@ var _ = Describe("AIGateway CRD", func() {
 				spec.Endpoint.Port = 70000
 			},
 			"spec.endpoint.port in body should be less than or equal to 65535"),
-		Entry("invalid authentication type", "invalid-auth-type",
+		Entry("empty authentication type", "empty-auth-type",
 			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
 				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
-					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-						{Type: aigatewayv1alpha1.IdentityType("SAML")},
-					},
+					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{{Name: "consumers"}},
 				}
 			},
-			"Unsupported value: \"SAML\""),
-		Entry("duplicate authentication types", "duplicate-auth-types",
+			"spec.governance.authentication[0].authType"),
+		Entry("empty authentication name", "empty-auth-name",
+			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
+				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
+					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{{AuthType: "custom"}},
+				}
+			},
+			"spec.governance.authentication[0].name"),
+		Entry("duplicate authentication names", "duplicate-auth-names",
 			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
 				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
 					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-						{Type: aigatewayv1alpha1.IdentityTypeOIDC},
-						{Type: aigatewayv1alpha1.IdentityTypeOIDC},
+						{Name: "consumers", AuthType: "custom"},
+						{Name: "consumers", AuthType: "apiKey"},
 					},
 				}
 			},
@@ -232,24 +293,6 @@ var _ = Describe("AIGateway CRD", func() {
 				spec.Runtime = &aigatewayv1alpha1.RuntimeSpec{Replicas: new(int32(0))}
 			},
 			"spec.runtime.replicas in body should be greater than or equal to 1"),
-		Entry("refreshSeconds below minimum", "refresh-seconds-zero",
-			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
-				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
-					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-						{Type: aigatewayv1alpha1.IdentityTypeAPIKey, RefreshSeconds: new(int32(0))},
-					},
-				}
-			},
-			"spec.governance.authentication[0].refreshSeconds in body should be greater than or equal to 1"),
-		Entry("maxStalenessSeconds below minimum", "staleness-negative",
-			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
-				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
-					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-						{Type: aigatewayv1alpha1.IdentityTypeAPIKey, MaxStalenessSeconds: new(int32(-1))},
-					},
-				}
-			},
-			"spec.governance.authentication[0].maxStalenessSeconds in body should be greater than or equal to 1"),
 		// CEL validations (x-kubernetes-validations rules)
 		Entry("neither inference nor mcp configured", "no-capability",
 			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
@@ -286,44 +329,6 @@ var _ = Describe("AIGateway CRD", func() {
 				spec.TenantRef = aigatewayv1alpha1.LocalObjectReference{Name: "Team_Alpha"}
 			},
 			"spec.tenantRef.name in body should match"),
-		Entry("keySource secretRef key with an illegal character", "key-source-bad-key",
-			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
-				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
-					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-						{
-							Type: aigatewayv1alpha1.IdentityTypeAPIKey,
-							KeySource: &aigatewayv1alpha1.APIKeySource{
-								SecretRef: aigatewayv1alpha1.LocalSecretKeyReference{
-									LocalObjectReference: aigatewayv1alpha1.LocalObjectReference{
-										Name: "consumer-keys",
-									},
-									Key: "keys/api",
-								},
-							},
-						},
-					},
-				}
-			},
-			"spec.governance.authentication[0].keySource.secretRef.key in body should match"),
-		Entry("keySource secretRef with an empty key", "key-source-empty-key",
-			func(spec *aigatewayv1alpha1.AIGatewaySpec) {
-				spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
-					Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-						{
-							Type: aigatewayv1alpha1.IdentityTypeAPIKey,
-							KeySource: &aigatewayv1alpha1.APIKeySource{
-								SecretRef: aigatewayv1alpha1.LocalSecretKeyReference{
-									LocalObjectReference: aigatewayv1alpha1.LocalObjectReference{
-										Name: "consumer-keys",
-									},
-									Key: "",
-								},
-							},
-						},
-					},
-				}
-			},
-			"spec.governance.authentication[0].keySource.secretRef.key"),
 	)
 
 	DescribeTable("accepts a valid capability combination",
@@ -360,6 +365,7 @@ var _ = Describe("AIGateway CRD", func() {
 	)
 
 	It("persists nested secret references", func(ctx context.Context) {
+		const keySourceJSON = `{"secretRef":{"name":"consumer-keys","key":"keys.yaml"}}`
 		ns := newTestNamespace(ctx)
 		spec := validAIGatewaySpec()
 		spec.Inference.Responses = &aigatewayv1alpha1.ResponsesSpec{
@@ -368,19 +374,10 @@ var _ = Describe("AIGateway CRD", func() {
 			},
 		}
 		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
-			Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-				{
-					Type: aigatewayv1alpha1.IdentityTypeAPIKey,
-					KeySource: &aigatewayv1alpha1.APIKeySource{
-						SecretRef: aigatewayv1alpha1.LocalSecretKeyReference{
-							LocalObjectReference: aigatewayv1alpha1.LocalObjectReference{
-								Name: "consumer-keys",
-							},
-							Key: "keys.yaml",
-						},
-					},
-				},
-			},
+			Authentication: []aigatewayv1alpha1.IdentityTypeSpec{{
+				Name: "consumers", AuthType: aigatewayv1alpha1.IdentityTypeAPIKey,
+				Fields: map[string]json.RawMessage{"keySource": json.RawMessage(keySourceJSON)},
+			}},
 		}
 		gw := &aigatewayv1alpha1.AIGateway{
 			ObjectMeta: metav1.ObjectMeta{Name: "nested-secret-refs", Namespace: ns},
@@ -396,9 +393,6 @@ var _ = Describe("AIGateway CRD", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gw), got)).To(Succeed())
 		Expect(got.Spec.Inference.Responses.ConversationState).NotTo(BeNil())
 		Expect(got.Spec.Inference.Responses.ConversationState.SecretRef.Name).To(Equal("responses-state"))
-		keySource := got.Spec.Governance.Authentication[0].KeySource
-		Expect(keySource).NotTo(BeNil())
-		Expect(keySource.SecretRef.Name).To(Equal("consumer-keys"))
-		Expect(keySource.SecretRef.Key).To(Equal("keys.yaml"))
+		Expect(got.Spec.Governance.Authentication[0].Fields["keySource"]).To(MatchJSON(keySourceJSON))
 	})
 })

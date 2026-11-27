@@ -91,87 +91,30 @@ spec:
                   authentication:
                     description: |-
                       authentication is a list of authentication configurations.
-                      Each entry's type must match a Tenant authorizedIdentities entry.
+                      Each entry's authType must match a Tenant authorizedIdentities entry.
                     items:
-                      description: |-
-                        IdentityTypeSpec is authentication configuration for a single identity type.
-                        Discriminated by type.
+                      description: IdentityTypeSpec configures a named authentication
+                        provider.
                       properties:
-                        audiences:
-                          description: |-
-                            audiences is a list of OIDC audiences, used when type is OIDC.
-                            When unset, the runtime applies the gateway name.
-                          items:
-                            type: string
-                          maxItems: 16
-                          type: array
-                        header:
-                          description: |-
-                            header is the HTTP header name carrying the API key, used when type is APIKey.
-                            v1alpha1 does not validate this field against the type.
+                        authType:
+                          description: authType identifies the authentication package
+                            and must match a Tenant authorizedIdentities type.
+                          minLength: 1
                           type: string
-                        issuerURL:
-                          description: |-
-                            issuerURL is the OIDC issuer URL, used when type is OIDC.
-                            v1alpha1 does not validate this field against the type.
-                          type: string
-                        keySource:
-                          description: keySource is the source of API keys, used when
-                            type is APIKey.
-                          properties:
-                            secretRef:
-                              description: secretRef selects the Secret entry holding
-                                the API keys.
-                              properties:
-                                key:
-                                  description: key is the entry within the Secret
-                                    holding the value.
-                                  maxLength: 253
-                                  minLength: 1
-                                  pattern: ^[-._a-zA-Z0-9]+$
-                                  type: string
-                                name:
-                                  description: name is the name of the object.
-                                  maxLength: 253
-                                  minLength: 1
-                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
-                                  type: string
-                              required:
-                              - key
-                              - name
-                              type: object
-                          required:
-                          - secretRef
-                          type: object
-                        maxStalenessSeconds:
-                          default: 30
-                          description: |-
-                            maxStalenessSeconds is the maximum staleness before a cached key is considered
-                            invalid, used when type is APIKey.
-                          format: int32
-                          minimum: 1
-                          type: integer
-                        refreshSeconds:
-                          default: 5
-                          description: refreshSeconds is the cache refresh interval
-                            for API keys, used when type is APIKey.
-                          format: int32
-                          minimum: 1
-                          type: integer
-                        type:
-                          description: type is the authentication type. Required;
-                            must match a Tenant authorizedIdentities entry.
-                          enum:
-                          - OIDC
-                          - APIKey
+                        name:
+                          description: name identifies this authentication configuration
+                            within the gateway.
+                          minLength: 1
                           type: string
                       required:
-                      - type
+                      - authType
+                      - name
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     maxItems: 16
                     type: array
                     x-kubernetes-list-map-keys:
-                    - type
+                    - name
                     x-kubernetes-list-type: map
                 type: object
               inference:

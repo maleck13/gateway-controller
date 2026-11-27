@@ -82,6 +82,22 @@ var _ = Describe("Tenant CRD", func() {
 		Expect(got.Spec.AuthorizedCredentials[0].SecretRef.Name).To(Equal("model-provider-key"))
 	})
 
+	It("preserves open, case-sensitive authentication type grants", func(ctx context.Context) {
+		tenant := &aigatewayv1alpha1.Tenant{
+			ObjectMeta: metav1.ObjectMeta{Name: "open-types", Namespace: newTestNamespace(ctx)},
+			Spec: aigatewayv1alpha1.TenantSpec{AuthorizedIdentities: []aigatewayv1alpha1.AuthorizedIdentity{
+				{Type: "externalApiKey"}, {Type: "apiKey"}, {Type: "APIKey"}, {Type: "oidc"},
+			}},
+		}
+		Expect(k8sClient.Create(ctx, tenant)).To(Succeed())
+		DeferCleanup(func(ctx context.Context) error {
+			return client.IgnoreNotFound(k8sClient.Delete(ctx, tenant))
+		})
+		got := &aigatewayv1alpha1.Tenant{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(tenant), got)).To(Succeed())
+		Expect(got.Spec.AuthorizedIdentities).To(Equal(tenant.Spec.AuthorizedIdentities))
+	})
+
 	DescribeTable("rejects an invalid Tenant",
 		func(ctx context.Context, name string, breakSpec func(*aigatewayv1alpha1.TenantSpec)) {
 			tenant := &aigatewayv1alpha1.Tenant{
@@ -100,10 +116,10 @@ var _ = Describe("Tenant CRD", func() {
 			Expect(apierrors.IsInvalid(err)).To(BeTrue(),
 				"expected a schema validation error, got: %v", err)
 		},
-		Entry("an unknown identity type", "unknown-identity-type",
+		Entry("an empty identity type", "empty-identity-type",
 			func(spec *aigatewayv1alpha1.TenantSpec) {
 				spec.AuthorizedIdentities = []aigatewayv1alpha1.AuthorizedIdentity{
-					{Type: aigatewayv1alpha1.IdentityType("SAML")},
+					{Type: ""},
 				}
 			}),
 		Entry("duplicate identity types", "duplicate-identity-types",

@@ -98,9 +98,7 @@ spec:
                   properties:
                     type:
                       description: type is the authentication type this tenant authorizes.
-                      enum:
-                      - OIDC
-                      - APIKey
+                      minLength: 1
                       type: string
                   required:
                   - type

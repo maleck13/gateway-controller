@@ -15,7 +15,8 @@ spec:
   mcp: {}
   governance:
     authentication:
-      - type: OIDC
+      - name: employees
+        authType: oidc
         issuerURL: https://sso.example.com
         audiences:
           - team-alpha

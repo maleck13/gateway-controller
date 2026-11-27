@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -206,7 +207,10 @@ var _ = Describe("AIGateway Controller", func() {
 		spec := gatewaySpec("oidc-only")
 		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
 			Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-				{Type: aigatewayv1alpha1.IdentityTypeAPIKey, Header: "X-API-Key"},
+				{
+					Name: "consumers", AuthType: aigatewayv1alpha1.IdentityTypeAPIKey,
+					Fields: map[string]json.RawMessage{"header": json.RawMessage(`"X-API-Key"`)},
+				},
 			},
 		}
 		gateway := createGateway(ctx, namespace, "unauthorized-auth-gw", spec)
@@ -216,7 +220,7 @@ var _ = Describe("AIGateway Controller", func() {
 			gom.Expect(ready).NotTo(BeNil())
 			gom.Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 			gom.Expect(ready.Reason).To(Equal(aigatewayv1alpha1.ReasonInvalid))
-			gom.Expect(ready.Message).To(ContainSubstring("APIKey"),
+			gom.Expect(ready.Message).To(ContainSubstring("apiKey"),
 				"the message should name the unauthorized type")
 		}).WithContext(ctx).WithTimeout(envtestReconcileTimeout).Should(Succeed())
 	})
@@ -233,7 +237,10 @@ var _ = Describe("AIGateway Controller", func() {
 		spec := gatewaySpec("both-types")
 		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{
 			Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
-				{Type: aigatewayv1alpha1.IdentityTypeOIDC, IssuerURL: "https://sso.example.com"},
+				{
+					Name: "employees", AuthType: aigatewayv1alpha1.IdentityTypeOIDC,
+					Fields: map[string]json.RawMessage{"issuerURL": json.RawMessage(`"https://sso.example.com"`)},
+				},
 			},
 		}
 		gateway := createGateway(ctx, namespace, "authorized-auth-gw", spec)
@@ -245,4 +252,80 @@ var _ = Describe("AIGateway Controller", func() {
 			gom.Expect(ready.Reason).To(Equal(aigatewayv1alpha1.ReasonReady))
 		}).WithContext(ctx).WithTimeout(envtestReconcileTimeout).Should(Succeed())
 	})
+	It("rejects multiple entries then preserves extension fields through the status patch", func(ctx context.Context) {
+		namespace := newTestNamespace(ctx)
+		createTenant(ctx, namespace, "extension-owner", aigatewayv1alpha1.TenantSpec{
+			AuthorizedIdentities: []aigatewayv1alpha1.AuthorizedIdentity{{Type: "externalApiKey"}},
+		})
+		const provider = `{"endpoint":"https://validator.example.com","values":[null,true,9007199254740993]}`
+		spec := gatewaySpec("extension-owner")
+		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
+			{
+				Name: "first", AuthType: "externalApiKey",
+				Fields: map[string]json.RawMessage{"validation": json.RawMessage(provider)},
+			},
+			{Name: "second", AuthType: "externalApiKey"},
+		}}
+		gateway := createGateway(ctx, namespace, "extension-gateway", spec)
+		Eventually(func(gom Gomega, ctx context.Context) {
+			ready := gatewayReady(ctx, gateway)
+			gom.Expect(ready).NotTo(BeNil())
+			gom.Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+			gom.Expect(ready.Reason).To(Equal(aigatewayv1alpha1.ReasonInvalid))
+			gom.Expect(ready.Message).To(ContainSubstring("one authentication entry"))
+			gom.Expect(ready.ObservedGeneration).To(Equal(gateway.Generation))
+		}).WithContext(ctx).WithTimeout(envtestReconcileTimeout).Should(Succeed())
+		Eventually(func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(gateway), gateway); err != nil {
+				return err
+			}
+			gateway.Spec.Governance.Authentication = gateway.Spec.Governance.Authentication[:1]
+			return k8sClient.Update(ctx, gateway)
+		}).Should(Succeed())
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &aigatewayv1alpha1.AIGateway{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gateway), got)).To(Succeed())
+			ready := meta.FindStatusCondition(got.Status.Conditions, aigatewayv1alpha1.ConditionTypeReady)
+			gom.Expect(ready).NotTo(BeNil())
+			gom.Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+			gom.Expect(ready.Reason).To(Equal(aigatewayv1alpha1.ReasonReady))
+			gom.Expect(ready.ObservedGeneration).To(Equal(got.Generation))
+			gom.Expect(got.Spec.Governance.Authentication[0].Fields["validation"]).To(MatchJSON(provider))
+			gom.Expect(string(got.Spec.Governance.Authentication[0].Fields["validation"])).
+				To(ContainSubstring("9007199254740993"))
+		}).WithContext(ctx).WithTimeout(envtestReconcileTimeout).Should(Succeed())
+	})
+
+	It("requires an exact Tenant grant and reconciles grant updates", func(ctx context.Context) {
+		namespace := newTestNamespace(ctx)
+		tenant := createTenant(ctx, namespace, "case-owner", aigatewayv1alpha1.TenantSpec{
+			AuthorizedIdentities: []aigatewayv1alpha1.AuthorizedIdentity{{Type: "APIKey"}},
+		})
+		spec := gatewaySpec("case-owner")
+		spec.Governance = &aigatewayv1alpha1.GovernanceSpec{Authentication: []aigatewayv1alpha1.IdentityTypeSpec{
+			{Name: "consumers", AuthType: "apiKey"},
+		}}
+		gateway := createGateway(ctx, namespace, "case-gateway", spec)
+		Eventually(func(gom Gomega, ctx context.Context) {
+			ready := gatewayReady(ctx, gateway)
+			gom.Expect(ready).NotTo(BeNil())
+			gom.Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+			gom.Expect(ready.Reason).To(Equal(aigatewayv1alpha1.ReasonInvalid))
+			gom.Expect(ready.Message).To(ContainSubstring("not authorized"))
+		}).WithContext(ctx).WithTimeout(envtestReconcileTimeout).Should(Succeed())
+		Eventually(func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(tenant), tenant); err != nil {
+				return err
+			}
+			tenant.Spec.AuthorizedIdentities[0].Type = "apiKey"
+			return k8sClient.Update(ctx, tenant)
+		}).Should(Succeed())
+		Eventually(func(gom Gomega, ctx context.Context) {
+			ready := gatewayReady(ctx, gateway)
+			gom.Expect(ready).NotTo(BeNil())
+			gom.Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+			gom.Expect(ready.Reason).To(Equal(aigatewayv1alpha1.ReasonReady))
+		}).WithContext(ctx).WithTimeout(envtestReconcileTimeout).Should(Succeed())
+	})
+
 })

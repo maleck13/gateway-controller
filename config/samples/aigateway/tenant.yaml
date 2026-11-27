@@ -5,8 +5,8 @@ metadata:
   namespace: team-alpha
 spec:
   authorizedIdentities:
-    - type: OIDC
-    - type: APIKey
+    - type: oidc
+    - type: apiKey
   authorizedCredentials:
     - secretRef:
         name: model-provider-key

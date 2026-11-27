@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"encoding/json"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -63,61 +65,29 @@ type InferenceSpec struct {
 // MCPSpec enables MCP capability. An empty struct enables MCP.
 type MCPSpec struct{}
 
-// IdentityTypeSpec is authentication configuration for a single identity type.
-// Discriminated by type.
+// IdentityTypeSpec configures a named authentication provider.
+// +kubebuilder:pruning:PreserveUnknownFields
 type IdentityTypeSpec struct {
-	// type is the authentication type. Required; must match a Tenant authorizedIdentities entry.
+	// name identifies this authentication configuration within the gateway.
 	// +required
-	Type IdentityType `json:"type"`
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 
-	// issuerURL is the OIDC issuer URL, used when type is OIDC.
-	// v1alpha1 does not validate this field against the type.
-	// +optional
-	IssuerURL string `json:"issuerURL,omitzero"`
-
-	// audiences is a list of OIDC audiences, used when type is OIDC.
-	// When unset, the runtime applies the gateway name.
-	// +optional
-	// +kubebuilder:validation:MaxItems=16
-	Audiences []string `json:"audiences,omitzero"`
-
-	// header is the HTTP header name carrying the API key, used when type is APIKey.
-	// v1alpha1 does not validate this field against the type.
-	// +optional
-	Header string `json:"header,omitzero"`
-
-	// keySource is the source of API keys, used when type is APIKey.
-	// +optional
-	KeySource *APIKeySource `json:"keySource,omitzero"`
-
-	// refreshSeconds is the cache refresh interval for API keys, used when type is APIKey.
-	// +optional
-	// +kubebuilder:default=5
-	// +kubebuilder:validation:Minimum=1
-	RefreshSeconds *int32 `json:"refreshSeconds,omitzero"`
-
-	// maxStalenessSeconds is the maximum staleness before a cached key is considered
-	// invalid, used when type is APIKey.
-	// +optional
-	// +kubebuilder:default=30
-	// +kubebuilder:validation:Minimum=1
-	MaxStalenessSeconds *int32 `json:"maxStalenessSeconds,omitzero"`
-}
-
-// APIKeySource configures where API key lists are sourced.
-type APIKeySource struct {
-	// secretRef selects the Secret entry holding the API keys.
+	// authType identifies the authentication package and must match a Tenant authorizedIdentities type.
 	// +required
-	SecretRef LocalSecretKeyReference `json:"secretRef"`
+	AuthType IdentityType `json:"authType"`
+
+	// Fields contains provider configuration serialized alongside name and authType.
+	Fields map[string]json.RawMessage `json:"-"`
 }
 
 // GovernanceSpec configures gateway-level governance.
 type GovernanceSpec struct {
 	// authentication is a list of authentication configurations.
-	// Each entry's type must match a Tenant authorizedIdentities entry.
+	// Each entry's authType must match a Tenant authorizedIdentities entry.
 	// +optional
 	// +listType=map
-	// +listMapKey=type
+	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=16
 	Authentication []IdentityTypeSpec `json:"authentication,omitzero"`
 }

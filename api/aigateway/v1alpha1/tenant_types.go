@@ -6,15 +6,15 @@ import (
 )
 
 // IdentityType is an authentication type a Tenant may authorize.
-// +kubebuilder:validation:Enum=OIDC;APIKey
+// +kubebuilder:validation:MinLength=1
 type IdentityType string
 
 const (
 	// IdentityTypeOIDC authorizes OIDC authentication.
-	IdentityTypeOIDC IdentityType = "OIDC"
+	IdentityTypeOIDC IdentityType = "oidc"
 
 	// IdentityTypeAPIKey authorizes API key authentication.
-	IdentityTypeAPIKey IdentityType = "APIKey"
+	IdentityTypeAPIKey IdentityType = "apiKey"
 )
 
 // AuthorizedIdentity is an authentication type the Tenant permits callers to
